@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+*.egg-info/
+
+# Data / media (large files shouldn't go in git)
+data/sample_clips/*.mp4
+data/sample_clips/*.avi
+data/sample_clips/*.mov
+!data/sample_clips/.gitkeep
+
+# Model weights (download separately, don't commit large files)
+*.pt
+*.onnx
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs / outputs
+*.log
+output/
+alerts/
