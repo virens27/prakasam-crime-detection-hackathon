@@ -25,3 +25,5 @@ data/sample_clips/*.mov
 *.log
 output/
 alerts/
+
+Weapon-Detection--2/
