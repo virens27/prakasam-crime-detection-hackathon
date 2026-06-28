@@ -2,26 +2,54 @@
 weapon_detection.py
 
 Module: Weapon Detection
-Detects visible weapons (knife/gun) in video frames using a YOLOv8 model.
+Detects visible weapons in video frames using YOLOv8n.
 
-TODO (Team):
-1. Download/fine-tune a YOLOv8n weapon-detection model
-   - Option A: Find a pretrained weapon-detection .pt weights file (Roboflow Universe
-     has several open weapon-detection datasets you can train YOLOv8n on quickly)
-   - Option B: Fine-tune yolov8n.pt on a weapon dataset using Ultralytics' `model.train()`
-2. Place the trained weights file at: src/modules/weights/weapon_yolov8n.pt
-3. Test detect_weapons() on a sample frame and confirm bounding boxes + confidence scores look right
-4. Tune CONFIDENCE_THRESHOLD based on false positive rate during testing
+Note on model choice:
+    The ideal setup is a YOLOv8n model fine-tuned specifically on weapon
+    images (e.g. trained on the Roboflow buildx/weapon-detection-7kro8
+    dataset which is already downloaded in Weapon-Detection--2/).
+    
+    For this MVP we use the base yolov8n.pt model and filter its detections
+    to only flag COCO classes that overlap with weapons (person is excluded,
+    but items like "knife" are in COCO). The weapon-specific class list from
+    the Roboflow dataset is also included so the module is ready to swap in
+    fine-tuned weights when available.
+
+    To use fine-tuned weights (future upgrade):
+    1. Train: yolo train model=yolov8n.pt data=Weapon-Detection--2/data.yaml epochs=20
+    2. Replace MODEL_PATH below with the output weights path
+    3. Set USE_WEAPON_DATASET_CLASSES = True
+
+Future scope:
+    Train yolov8n on the downloaded Weapon-Detection--2 dataset for
+    significantly higher accuracy on real-world weapon detection scenarios.
 """
 
+import cv2
+import time
+import sys
 from ultralytics import YOLO
 
-# TODO: update path once you have trained/downloaded weights
-MODEL_PATH = "src/modules/weights/weapon_yolov8n.pt"
-CONFIDENCE_THRESHOLD = 0.5
+# --- Configuration ---
+MODEL_PATH = "yolov8n.pt"          # base YOLOv8n -- swap with fine-tuned weights when available
+CONFIDENCE_THRESHOLD = 0.45        # minimum confidence to flag a detection
 
-# Classes we care about (depends on your training dataset's class names)
-WEAPON_CLASSES = ["knife", "gun", "pistol", "rifle"]
+# COCO classes (in base yolov8n) that are weapon-related
+# These are the only detections we care about from the base model
+COCO_WEAPON_CLASSES = [
+    "knife"
+]
+
+# Full weapon class list from the Roboflow buildx dataset
+# Used when fine-tuned weights are loaded
+WEAPON_DATASET_CLASSES = [
+    "Knife", "ak", "ax", "cleaver", "cutter", "eto",
+    "long sword", "m16", "revolver", "rifle",
+    "semi automatic", "short sword", "shotgun", "spear"
+]
+
+# Set to True when using fine-tuned weapon-detection weights
+USE_WEAPON_DATASET_CLASSES = False
 
 
 class WeaponDetector:
@@ -29,12 +57,17 @@ class WeaponDetector:
         self.model = YOLO(model_path)
         self.conf_threshold = conf_threshold
 
+        if USE_WEAPON_DATASET_CLASSES:
+            self.target_classes = [c.lower() for c in WEAPON_DATASET_CLASSES]
+        else:
+            self.target_classes = [c.lower() for c in COCO_WEAPON_CLASSES]
+
     def detect_weapons(self, frame):
         """
         Run weapon detection on a single video frame.
 
         Args:
-            frame: a single image/frame (numpy array, BGR format from OpenCV)
+            frame: numpy array (BGR format from OpenCV)
 
         Returns:
             List of detections, each as a dict:
@@ -52,11 +85,11 @@ class WeaponDetector:
             cls_id = int(box.cls[0])
             class_name = self.model.names[cls_id]
 
-            if conf >= self.conf_threshold and class_name.lower() in WEAPON_CLASSES:
-                x1, y1, x2, y2 = box.xyxy[0].tolist()
+            if conf >= self.conf_threshold and class_name.lower() in self.target_classes:
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                 detections.append({
                     "class_name": class_name,
-                    "confidence": conf,
+                    "confidence": round(conf, 3),
                     "bbox": (x1, y1, x2, y2)
                 })
 
@@ -64,14 +97,36 @@ class WeaponDetector:
 
 
 if __name__ == "__main__":
-    # Quick manual test — TODO: replace with a real sample frame/image path
-    import cv2
+    video_path = sys.argv[1] if len(sys.argv) > 1 else "data/sample_clips/test_clip.mp4"
 
     detector = WeaponDetector()
-    test_frame = cv2.imread("data/sample_clips/test_frame.jpg")
+    cap = cv2.VideoCapture(video_path)
 
-    if test_frame is not None:
-        results = detector.detect_weapons(test_frame)
-        print("Detections:", results)
+    if not cap.isOpened():
+        print(f"Could not open video: {video_path}")
     else:
-        print("No test frame found. Add a test image to data/sample_clips/ to test this module.")
+        print(f"Testing weapon detection on: {video_path}")
+        print(f"Watching for: {detector.target_classes}\n")
+
+        frame_count = 0
+        alert_count = 0
+        start_time = time.time()
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            frame_count += 1
+            if frame_count % 3 != 0:
+                continue
+
+            detections = detector.detect_weapons(frame)
+            if detections:
+                alert_count += 1
+                print(f"[Frame {frame_count}] WEAPON DETECTED: {detections}")
+
+        elapsed = time.time() - start_time
+        print(f"\nFinished: {frame_count} frames in {elapsed:.1f}s")
+        print(f"Total weapon alerts: {alert_count}")
+        cap.release()
